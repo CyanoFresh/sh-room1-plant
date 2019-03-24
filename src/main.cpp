@@ -32,6 +32,44 @@ struct {
 StaticJsonDocument<JSON_OBJECT_SIZE(2)> jsonDocument;
 char sendBuffer[JSON_OBJECT_SIZE(2)];
 
+void water(int stop = 0) {
+    if (stop) {
+        digitalWrite(pumpPin, LOW);
+
+        mqttClient.publish("plant/room1-plant/watered", 0, false, "true");
+    } else {
+        digitalWrite(pumpPin, HIGH);
+
+        waterTimer.once(config.duration, water, 1);
+    }
+}
+
+void read(int sendConfig = 0) {
+    Serial.println(analogRead(A0));
+    auto moisture = (uint8_t) (100 - (analogRead(A0) / 1023.0) * 100.0);
+    Serial.println(moisture);
+
+    if (moisture <= config.moisture) {
+        water(0);
+    }
+
+    String payload = "{\"moisture\":";
+    payload += moisture;
+
+    if (sendConfig) {
+        payload += ",\"minMoisture\":";
+        payload += config.moisture;
+        payload += ",\"duration\":";
+        payload += config.duration;
+    }
+
+    payload += "}";
+
+    if (mqttClient.connected()) {
+        mqttClient.publish("plant/room1-plant", 0, false, payload.c_str());
+    }
+}
+
 void connectToWifi() {
     Serial.println("Connecting to Wi-Fi...");
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
@@ -64,8 +102,11 @@ void onMqttConnect(bool) {
 
     // Subscribe to topics:
     mqttClient.subscribe("plant/room1-plant/water", 0);
-    mqttClient.subscribe("plant/room1-plant/settings", 0);
+    mqttClient.subscribe("plant/room1-plant/set", 0);
     mqttClient.subscribe("device/room1-plant", 0);
+
+    // Send current state
+    read(1);
 }
 
 void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
@@ -78,45 +119,18 @@ void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
     }
 }
 
-void water(bool turnOff = false) {
-    if (turnOff) {
-        digitalWrite(pumpPin, LOW);
-
-        mqttClient.publish("plant/room1-plant/watered", 0, false, "true");
-    } else {
-        digitalWrite(pumpPin, HIGH);
-
-        waterTimer.once(config.duration, water, true);
-    }
-}
-
-void read() {
-    Serial.println(analogRead(A0));
-    auto moisture = (uint) (100 - (analogRead(A0) / 1023) * 100);
-    Serial.println(moisture);
-
-    if (moisture <= config.moisture) {
-        water();
-    }
-
-    String payload = "{\"moisture\":";
-    payload += moisture;
-    payload += "}";
-
-    mqttClient.publish("plant/room1-plant", 0, false, payload.c_str());
-}
-
 void onMqttMessage(char *topic, char *payload, AsyncMqttClientMessageProperties, size_t length, size_t, size_t) {
     if (strcmp(topic, "plant/room1-plant/water") == 0) {
-        water();
+        water(0);
     } else {
+        strncpy(sendBuffer, payload, length);
+        sendBuffer[length] = '\0';
+
         deserializeJson(jsonDocument, payload, length);
 
-        config.moisture = jsonDocument["moisture"];
-        config.duration = jsonDocument["duration"];
+        config.moisture = (uint8_t)jsonDocument["minMoisture"];
+        config.duration = (uint8_t)jsonDocument["duration"];
 
-        strcpy(sendBuffer, payload);
-        sendBuffer[length] = '\n';
         mqttClient.publish("plant/room1-plant", 0, false, sendBuffer);
 
         // Save config to the memory
@@ -126,8 +140,6 @@ void onMqttMessage(char *topic, char *payload, AsyncMqttClientMessageProperties,
 }
 
 void setup() {
-    EEPROM.begin(sizeof(config));
-
     Serial.begin(115200);
     Serial.println();
     Serial.println();
@@ -135,7 +147,26 @@ void setup() {
     pinMode(pumpPin, OUTPUT);
 
     // Load config from the memory
+    EEPROM.begin(sizeof(config));
     EEPROM.get(0, config);
+
+    // Save default values if was not set
+    if (config.moisture == 0) {
+        config.moisture = 80;
+    }
+
+    if (config.duration == 0) {
+        config.moisture = 10;
+    }
+
+    EEPROM.put(0, config);
+    EEPROM.commit();
+
+    Serial.println("Loaded config: ");
+    Serial.print("moisture: ");
+    Serial.println(config.moisture);
+    Serial.print("duration: ");
+    Serial.println(config.duration);
 
     wifiConnectHandler = WiFi.onStationModeGotIP(onWifiConnect);
     wifiDisconnectHandler = WiFi.onStationModeDisconnected(onWifiDisconnect);
@@ -147,7 +178,7 @@ void setup() {
     mqttClient.setClientId(MQTT_ID);
     mqttClient.setCredentials("device", MQTT_PASSWORD);
 
-    readTimer.attach(60, read);
+    readTimer.attach(300, read, 0);
 
     connectToWifi();
 }
