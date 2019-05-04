@@ -46,7 +46,7 @@ void water(int stop = 0) {
 
 void read(int sendConfig = 0) {
     Serial.println(analogRead(A0));
-    auto moisture = (uint8_t) (100 - (analogRead(A0) / 1023.0) * 100.0);
+    auto moisture = (uint8_t) (100 - map(analogRead(A0), 420, 850, 0, 100));
     Serial.println(moisture);
 
     if (moisture <= config.moisture) {
@@ -128,8 +128,8 @@ void onMqttMessage(char *topic, char *payload, AsyncMqttClientMessageProperties,
 
         deserializeJson(jsonDocument, payload, length);
 
-        config.moisture = (uint8_t)jsonDocument["minMoisture"];
-        config.duration = (uint8_t)jsonDocument["duration"];
+        config.moisture = (uint8_t) jsonDocument["minMoisture"];
+        config.duration = (uint8_t) jsonDocument["duration"];
 
         mqttClient.publish("plant/room1-plant", 0, false, sendBuffer);
 
