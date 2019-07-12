@@ -35,7 +35,7 @@ void water(bool stop = false) {
     }
 }
 
-void read() {
+void read(bool sendConfigState = false) {
     auto moisture = (uint8_t) (
             100 - map(
                     analogRead(A0),
@@ -58,10 +58,14 @@ void read() {
 
     String payload = "{\"moisture\":";
     payload += moisture;
-    payload += ",\"minMoisture\":";
-    payload += state.moisture;
-    payload += ",\"duration\":";
-    payload += state.duration;
+
+    if (sendConfigState) {
+        payload += ",\"minMoisture\":";
+        payload += state.moisture;
+        payload += ",\"duration\":";
+        payload += state.duration;
+    }
+
     payload += "}";
 
     mqttClient.publish("plant/room1-plant", 0, false, payload.c_str());
@@ -99,7 +103,7 @@ void onMqttConnect(bool) {
     mqttClient.subscribe("plant/room1-plant/set", 0);
 
     // Send current state
-    read();
+    read(true);
 }
 
 void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
@@ -125,7 +129,7 @@ void onMqttMessage(char *topic, char *payload, AsyncMqttClientMessageProperties,
         state.moisture = (uint8_t) jsonDocument["minMoisture"];
         state.duration = (uint8_t) jsonDocument["duration"];
 
-        read(); // Read with applied parameters & send state
+        read(true);     // Read & send applied parameters
 
         // Save state to the memory
         EEPROM.put(0, state);
@@ -174,7 +178,7 @@ void setup() {
     mqttClient.setClientId(config::MQTT_ID);
     mqttClient.setCredentials("device", config::MQTT_PASSWORD);
 
-    readTimer.attach(config::SENSOR_READ_INTERVAL, read);
+    readTimer.attach(config::SENSOR_READ_INTERVAL, read, false);
 
     connectToWifi();
 }
